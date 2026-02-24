@@ -1,0 +1,384 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ROMharbor — Play</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0a0a0a;--surface:#111;--border:#222;--dim:#666;--text:#e0e0e0;--primary:#00ff88;--danger:#ff4444}
+body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;min-height:100vh}
+a{color:var(--primary)}
+.header{padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px}
+.header h1{font-size:18px;color:var(--primary)}
+.header a{font-size:13px;color:var(--dim);text-decoration:none}
+.header a:hover{color:var(--primary)}
+
+/* Loading screen */
+#loading{display:flex;flex-direction:column;align-items:center;justify-content:center;height:80vh}
+#loading h2{color:var(--primary);margin-bottom:12px}
+#loadMsg{color:var(--dim);margin-bottom:16px}
+.bar{width:300px;height:14px;background:var(--surface);border-radius:7px;overflow:hidden;border:1px solid var(--border)}
+.bar .fill{height:100%;background:var(--primary);width:0%;transition:width .3s}
+
+/* ROM picker */
+#picker{display:none;max-width:800px;margin:0 auto;padding:24px}
+#picker h2{color:var(--primary);margin-bottom:4px}
+#picker .subtitle{color:var(--dim);font-size:13px;margin-bottom:20px}
+.search{width:100%;padding:10px 14px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:inherit;font-size:14px;border-radius:6px;margin-bottom:16px;outline:none}
+.search:focus{border-color:var(--primary)}
+.rom-grid{display:flex;flex-direction:column;gap:8px}
+.rom-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:border-color .2s}
+.rom-card:hover{border-color:var(--primary)}
+.rom-card .name{font-weight:bold;font-size:14px}
+.rom-card .meta{color:var(--dim);font-size:12px;margin-top:4px}
+.rom-card .core-badge{background:var(--border);color:var(--primary);padding:3px 10px;border-radius:4px;font-size:12px;white-space:nowrap}
+.rom-card .unsupported{color:var(--dim)}
+
+/* Downloading overlay */
+#downloading{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:100;display:none;flex-direction:column;align-items:center;justify-content:center}
+#downloading h2{color:var(--primary);margin-bottom:8px}
+#dlMsg{color:var(--dim);margin-bottom:16px}
+#dlCancel{margin-top:16px;padding:8px 20px;background:none;border:1px solid var(--border);color:var(--dim);cursor:pointer;font-family:inherit;border-radius:4px}
+#dlCancel:hover{border-color:var(--danger);color:var(--danger)}
+
+/* Emulator */
+#emulator{display:none;width:100%;height:100vh}
+#backBar{position:fixed;top:0;left:0;right:0;z-index:200;padding:8px 16px;background:rgba(10,10,10,0.9);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px}
+#backBtn{padding:6px 16px;background:none;border:1px solid var(--border);color:var(--text);cursor:pointer;font-family:inherit;font-size:13px;border-radius:4px}
+#backBtn:hover{border-color:var(--primary);color:var(--primary)}
+#nowPlaying{color:var(--dim);font-size:13px}
+#game{width:100%;height:calc(100vh - 44px);margin-top:44px}
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <h2>&#9973; ROMharbor Play</h2>
+  <p id="loadMsg">Fetching ROM list...</p>
+  <div class="bar"><div class="fill" id="loadFill"></div></div>
+</div>
+
+<div id="picker">
+  <div class="header" style="padding:0 0 20px 0;border:none">
+    <h1>&#9973; ROMharbor Play</h1>
+    <a href="https://rom.wtf">rom.wtf</a>
+  </div>
+  <h2 id="romCount">Loading...</h2>
+  <p class="subtitle">Select a ROM to play in your browser. Save states are stored locally.</p>
+  <input class="search" id="searchInput" placeholder="Search ROMs..." autocomplete="off">
+  <div class="rom-grid" id="romList"></div>
+</div>
+
+<div id="downloading">
+  <h2>&#9973; Loading ROM</h2>
+  <p id="dlMsg">Downloading...</p>
+  <div class="bar"><div class="fill" id="dlFill"></div></div>
+  <button id="dlCancel">Cancel</button>
+</div>
+
+<div id="emulator">
+  <div id="backBar">
+    <button id="backBtn">&larr; Back to ROMs</button>
+    <span id="nowPlaying"></span>
+  </div>
+  <div id="game"></div>
+</div>
+
+<script>
+// ============ CONFIG ============
+const CONTRACT='0x39421f0da6F737cc6b6ee0eC5fcC4C4aEf7cAD0b';
+const RPCS=['https://1rpc.io/eth','https://ethereum-rpc.publicnode.com','https://0xrpc.io/eth'];
+const ROMDATA_TOPIC='0x1c2906d86c4c097f52f3e261925836cd04d893323d33373ecbf29a6a7767f601';
+const JH={'Content-Type':'application/json'};
+
+// Extension -> EmulatorJS core mapping
+const CORE_MAP={
+'gb':'gambatte','gbc':'gambatte',
+'gba':'mgba',
+'nes':'fceumm','fds':'fceumm',
+'snes':'snes9x','sfc':'snes9x',
+'z64':'mupen64plus_next','n64':'mupen64plus_next','v64':'mupen64plus_next',
+'nds':'melonds','ds':'melonds',
+'smd':'genesis_plus_gx','md':'genesis_plus_gx','gen':'genesis_plus_gx',
+'sms':'genesis_plus_gx','gg':'genesis_plus_gx',
+'psx':'pcsx_rearmed',
+'a26':'stella2014',
+'a78':'prosystem',
+'pce':'mednafen_pce_fast',
+'ngp':'mednafen_ngp','ngc':'mednafen_ngp',
+'ws':'mednafen_wswan','wsc':'mednafen_wswan',
+'vb':'mednafen_vb',
+};
+
+function getCore(name){
+const ext=name.split('.').pop().toLowerCase();
+return CORE_MAP[ext] || null;
+}
+
+function getCoreLabel(name){
+const ext=name.split('.').pop().toLowerCase();
+const labels={
+'gb':'Game Boy','gbc':'Game Boy Color','gba':'GBA',
+'nes':'NES','fds':'Famicom','snes':'SNES','sfc':'SNES',
+'z64':'N64','n64':'N64','v64':'N64',
+'nds':'Nintendo DS','ds':'Nintendo DS',
+'smd':'Genesis','md':'Genesis','gen':'Genesis',
+'sms':'Master System','gg':'Game Gear',
+'psx':'PlayStation','pce':'TurboGrafx-16',
+'a26':'Atari 2600','a78':'Atari 7800',
+'ngp':'Neo Geo Pocket','ngc':'Neo Geo Pocket',
+'ws':'WonderSwan','wsc':'WonderSwan',
+'vb':'Virtual Boy',
+};
+return labels[ext] || ext.toUpperCase();
+}
+
+// ============ ABI DECODER (from app.html) ============
+const ABI=(()=>{
+function decUint(data,offset){return BigInt('0x'+data.slice(offset*2,offset*2+64));}
+function decAddress(data,offset){return '0x'+data.slice(offset*2+24,offset*2+64);}
+function decBool(data,offset){return decUint(data,offset)!==0n;}
+function decUintArray(data,offset){
+const o=Number(decUint(data,offset));const len=Number(decUint(data,o));
+const arr=[];for(let i=0;i<len;i++)arr.push(decUint(data,o+32+i*32));return arr;
+}
+function decStringArray(data,offset){
+const o=Number(decUint(data,offset));const len=Number(decUint(data,o));
+const arr=[];
+for(let i=0;i<len;i++){
+const so=Number(decUint(data,o+32+i*32));const ab=o+32+so;
+const sLen=Number(decUint(data,ab));
+const hex=data.slice(ab*2+64,ab*2+64+sLen*2);
+const bytes=new Uint8Array(sLen);
+for(let j=0;j<sLen;j++)bytes[j]=parseInt(hex.substr(j*2,2),16);
+arr.push(new TextDecoder().decode(bytes));
+}return arr;
+}
+function decAddressArray(data,offset){
+const o=Number(decUint(data,offset));const len=Number(decUint(data,o));
+const arr=[];for(let i=0;i<len;i++)arr.push(decAddress(data,o+32+i*32));return arr;
+}
+function decBoolArray(data,offset){
+const o=Number(decUint(data,offset));const len=Number(decUint(data,o));
+const arr=[];for(let i=0;i<len;i++)arr.push(decBool(data,o+32+i*32));return arr;
+}
+return {decUint,decAddress,decBool,decUintArray,decStringArray,decAddressArray,decBoolArray};
+})();
+
+// ============ RPC (multi-failover, from app.html) ============
+async function rpcCall(method,params){
+let lastErr;
+for(const rpc of RPCS){
+try{
+const r=await fetch(rpc,{method:'POST',headers:JH,
+body:JSON.stringify({jsonrpc:'2.0',id:Date.now(),method,params})});
+const j=await r.json();
+if(j.error)throw new Error(j.error.message);
+return j.result;
+}catch(e){lastErr=e;}
+}throw lastErr;
+}
+async function ethCall(data){
+let lastErr;
+for(const rpc of RPCS){
+try{
+const r=await fetch(rpc,{method:'POST',headers:JH,
+body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_call',params:[{to:CONTRACT,data:'0x'+data},'latest']})});
+const j=await r.json();
+if(j.result&&j.result!=='0x')return j.result.slice(2);
+}catch(e){lastErr=e;}
+}throw lastErr||new Error('All RPCs failed');
+}
+async function getLogs(topics,fromBlock){
+const fb=fromBlock?'0x'+fromBlock.toString(16):'0x0';
+let lastErr;
+for(const rpc of RPCS){
+try{
+const r=await fetch(rpc,{method:'POST',headers:JH,
+body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_getLogs',
+params:[{address:CONTRACT,topics,fromBlock:fb,toBlock:'latest'}]})});
+const j=await r.json();
+if(j.error)throw new Error(j.error.message);
+return j.result||[];
+}catch(e){lastErr=e;}
+}throw lastErr;
+}
+
+// ============ DECOMPRESS (from app.html) ============
+async function decompress(data){
+const ds=new DecompressionStream('deflate-raw');
+const writer=ds.writable.getWriter();
+writer.write(data);writer.close();
+const chunks=[];const reader=ds.readable.getReader();
+while(true){const{done,value}=await reader.read();if(done)break;chunks.push(value);}
+let total=0;for(const c of chunks)total+=c.length;
+const result=new Uint8Array(total);let offset=0;
+for(const c of chunks){result.set(c,offset);offset+=c.length;}
+return result;
+}
+
+function escapeHTML(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ============ STATE ============
+let allROMs=null;
+let cancelDownload=false;
+
+// ============ LOAD ROM LIST ============
+async function loadROMs(){
+const loadMsg=document.getElementById('loadMsg');
+const loadFill=document.getElementById('loadFill');
+try{
+loadMsg.textContent='Fetching ROM list...';
+loadFill.style.width='30%';
+const result=await ethCall('7358dda1'); // getAllROMs()
+loadFill.style.width='80%';
+const ids=ABI.decUintArray(result,0);
+const names=ABI.decStringArray(result,32);
+const uploaders=ABI.decAddressArray(result,64);
+const sizes=ABI.decUintArray(result,96);
+const blockStarts=ABI.decUintArray(result,128);
+const finalized=ABI.decBoolArray(result,160);
+allROMs={ids,names,uploaders,sizes,blockStarts,finalized};
+loadFill.style.width='100%';
+setTimeout(()=>{
+document.getElementById('loading').style.display='none';
+document.getElementById('picker').style.display='block';
+renderROMs();
+document.getElementById('romCount').textContent=ids.length+' ROM(s) on-chain';
+},300);
+}catch(e){
+loadMsg.textContent='Error: '+e.message;
+loadFill.style.width='0%';
+}
+}
+
+function renderROMs(filter){
+if(!allROMs)return;
+const{ids,names,uploaders,sizes,blockStarts,finalized}=allROMs;
+const list=document.getElementById('romList');
+list.innerHTML='';
+const q=(filter||'').toLowerCase();
+let shown=0;
+for(let i=0;i<ids.length;i++){
+if(!finalized[i])continue;
+if(q&&!names[i].toLowerCase().includes(q))continue;
+shown++;
+const sizeKB=(Number(sizes[i])/1024).toFixed(1);
+const addr=uploaders[i];
+const shortAddr=addr.slice(0,6)+'...'+addr.slice(-4);
+const core=getCore(names[i]);
+const label=getCoreLabel(names[i]);
+const el=document.createElement('div');
+el.className='rom-card';
+el.innerHTML=
+'<div><span class="name">'+escapeHTML(names[i])+'</span>'+
+'<div class="meta">'+sizeKB+' KB compressed | by '+shortAddr+'</div></div>'+
+(core
+?'<span class="core-badge">'+escapeHTML(label)+'</span>'
+:'<span class="core-badge unsupported">Unsupported</span>');
+if(core){
+el.onclick=(()=>{const id=Number(ids[i]),nm=names[i],bs=Number(blockStarts[i]);return()=>playROM(id,nm,bs);})();
+}else{
+el.style.opacity='0.4';
+el.style.cursor='not-allowed';
+}
+list.appendChild(el);
+}
+if(shown===0){
+list.innerHTML='<div style="color:var(--dim);text-align:center;padding:40px">No playable ROMs found</div>';
+}
+}
+
+document.getElementById('searchInput').addEventListener('input',(e)=>{renderROMs(e.target.value);});
+
+// ============ DOWNLOAD ROM FROM CHAIN ============
+async function fetchROM(romId,name,blockStart){
+const dlMsg=document.getElementById('dlMsg');
+const dlFill=document.getElementById('dlFill');
+cancelDownload=false;
+
+dlMsg.textContent='Fetching ROM data for "'+name+'"...';
+dlFill.style.width='10%';
+
+const romIdHex='0x'+BigInt(romId).toString(16).padStart(64,'0');
+const logs=await getLogs([ROMDATA_TOPIC,romIdHex],blockStart);
+if(logs.length===0)throw new Error('No data found for ROM #'+romId);
+
+const chunks=[];
+for(let li=0;li<logs.length;li++){
+if(cancelDownload)throw new Error('Cancelled');
+const log=logs[li];
+const data=log.data.slice(2);
+const offset=parseInt(data.slice(0,64),16);
+const len=parseInt(data.slice(offset*2,offset*2+64),16);
+const hexBytes=data.slice(offset*2+64,offset*2+64+len*2);
+const bytes=new Uint8Array(len);
+for(let j=0;j<len;j++)bytes[j]=parseInt(hexBytes.substr(j*2,2),16);
+chunks.push(bytes);
+dlFill.style.width=(10+70*(li+1)/logs.length)+'%';
+dlMsg.textContent='Decoding chunk '+(li+1)+'/'+logs.length+'...';
+}
+
+dlMsg.textContent='Decompressing...';
+dlFill.style.width='85%';
+
+let total=0;for(const c of chunks)total+=c.length;
+const compressed=new Uint8Array(total);let off=0;
+for(const c of chunks){compressed.set(c,off);off+=c.length;}
+const decompressed=await decompress(compressed);
+dlFill.style.width='100%';
+return decompressed;
+}
+
+// ============ PLAY ROM ============
+async function playROM(romId,name,blockStart){
+const downloading=document.getElementById('downloading');
+downloading.style.display='flex';
+
+try{
+const romData=await fetchROM(romId,name,blockStart);
+downloading.style.display='none';
+document.getElementById('picker').style.display='none';
+
+// Prepare EmulatorJS
+const core=getCore(name);
+const blob=new Blob([romData],{type:'application/octet-stream'});
+const blobUrl=URL.createObjectURL(blob);
+
+// Clean ROM name for save state key
+const gameName=name.replace(/\.[^.]+$/,'');
+
+// Set EmulatorJS globals
+window.EJS_player='#game';
+window.EJS_core=core;
+window.EJS_gameUrl=blobUrl;
+window.EJS_gameName=gameName;
+window.EJS_pathtodata='https://cdn.emulatorjs.org/stable/data/';
+window.EJS_color='#00ff88';
+window.EJS_startOnLoaded=true;
+window.EJS_oldCores=false;
+
+// Show emulator
+document.getElementById('emulator').style.display='block';
+document.getElementById('nowPlaying').textContent='Playing: '+name;
+
+// Load EmulatorJS
+const script=document.createElement('script');
+script.src='https://cdn.emulatorjs.org/stable/data/loader.js';
+document.body.appendChild(script);
+
+}catch(e){
+downloading.style.display='none';
+if(e.message!=='Cancelled')alert('Failed to load ROM: '+e.message);
+}
+}
+
+document.getElementById('dlCancel').onclick=()=>{cancelDownload=true;};
+
+// ============ BACK BUTTON ============
+document.getElementById('backBtn').onclick=()=>{
+// Full reload to cleanly reset EmulatorJS state
+location.reload();
+};
+
+// ============ START ============
+loadROMs();
+</script>
+</body></html>
