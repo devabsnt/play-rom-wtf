@@ -21,6 +21,9 @@ a{color:var(--primary)}
 #picker{display:none;max-width:800px;margin:0 auto;padding:24px}
 #picker h2{color:var(--primary);margin-bottom:4px}
 #picker .subtitle{color:var(--dim);font-size:13px;margin-bottom:20px}
+.info-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:13px;line-height:1.6;color:var(--dim)}
+.info-box strong{color:var(--primary)}
+.info-box a{color:var(--primary);text-decoration:underline}
 .search{width:100%;padding:10px 14px;background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:inherit;font-size:14px;border-radius:6px;margin-bottom:16px;outline:none}
 .search:focus{border-color:var(--primary)}
 .rom-grid{display:flex;flex-direction:column;gap:8px}
@@ -59,6 +62,9 @@ a{color:var(--primary)}
   <div class="header" style="padding:0 0 20px 0;border:none">
     <h1>&#9973; ROMharbor Play</h1>
     <a href="https://rom.wtf">rom.wtf</a>
+  </div>
+  <div class="info-box">
+    <p><strong>ROMharbor</strong> stores ROM files permanently on the Ethereum blockchain. No servers, no takedowns — just immutable on-chain data. Browse and play ROMs below, or <a href="https://rom.wtf">upload your own at rom.wtf</a>.</p>
   </div>
   <h2 id="romCount">Loading...</h2>
   <p class="subtitle">Select a ROM to play in your browser. Save states are stored locally.</p>
