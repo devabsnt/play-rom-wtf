@@ -66,7 +66,6 @@ a{color:var(--primary)}
   <div class="info-box">
     <p><strong>ROMharbor</strong> stores ROM files permanently on the Ethereum blockchain. No servers, no takedowns — just immutable on-chain data. Browse and play ROMs below, or <a href="https://rom.wtf">upload your own at rom.wtf</a>.</p>
   </div>
-  <h2 id="romCount">Loading...</h2>
   <p class="subtitle">Select a ROM to play in your browser. Save states are stored locally.</p>
   <input class="search" id="searchInput" placeholder="Search ROMs..." autocomplete="off">
   <div class="rom-grid" id="romList"></div>
@@ -284,7 +283,6 @@ setTimeout(()=>{
 document.getElementById('loading').style.display='none';
 document.getElementById('picker').style.display='block';
 renderROMs();
-document.getElementById('romCount').remove();
 },300);
 }catch(e){
 loadMsg.textContent='Error: '+e.message;
