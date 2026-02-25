@@ -107,10 +107,10 @@ const CORE_MAP={
 'psx':'pcsx_rearmed',
 'a26':'stella2014',
 'a78':'prosystem',
-'pce':'mednafen_pce_fast',
+'pce':'mednafen_pce',
 'ngp':'mednafen_ngp','ngc':'mednafen_ngp',
 'ws':'mednafen_wswan','wsc':'mednafen_wswan',
-'vb':'mednafen_vb',
+'vb':'beetle_vb',
 };
 
 function getCore(name){
@@ -222,6 +222,43 @@ return result;
 
 function escapeHTML(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
+// ============ ON-CHAIN EMULATOR CORES ============
+// Maps core name -> on-chain ROM name (these are stored as [EMULATOR] entries)
+const ONCHAIN_CORES={
+'gambatte':'[EMULATOR] gambatte-wasm.data',
+'mupen64plus_next':'[EMULATOR] mupen64plus_next-wasm.data',
+};
+
+// Cache for downloaded core blob URLs
+const coreBlobCache={};
+
+async function fetchCoreFromChain(coreName, romInfo){
+const dlMsg=document.getElementById('dlMsg');
+dlMsg.textContent='Loading '+coreName+' emulator from chain...';
+const{id,blockStart}=romInfo;
+const romIdHex='0x'+BigInt(id).toString(16).padStart(64,'0');
+const logs=await getLogs([ROMDATA_TOPIC,romIdHex],blockStart);
+if(logs.length===0)throw new Error('No core data found on-chain for '+coreName);
+const chunks=[];
+for(let li=0;li<logs.length;li++){
+const log=logs[li];
+const data=log.data.slice(2);
+const offset=parseInt(data.slice(0,64),16);
+const len=parseInt(data.slice(offset*2,offset*2+64),16);
+const hexBytes=data.slice(offset*2+64,offset*2+64+len*2);
+const bytes=new Uint8Array(len);
+for(let j=0;j<len;j++)bytes[j]=parseInt(hexBytes.substr(j*2,2),16);
+chunks.push(bytes);
+dlMsg.textContent='Loading emulator chunk '+(li+1)+'/'+logs.length+'...';
+}
+let total=0;for(const c of chunks)total+=c.length;
+const compressed=new Uint8Array(total);let off=0;
+for(const c of chunks){compressed.set(c,off);off+=c.length;}
+// These .data files don't compress, so decompress returns the original
+const decompressed=await decompress(compressed);
+return decompressed;
+}
+
 // ============ STATE ============
 let allROMs=null;
 let cancelDownload=false;
@@ -247,7 +284,8 @@ setTimeout(()=>{
 document.getElementById('loading').style.display='none';
 document.getElementById('picker').style.display='block';
 renderROMs();
-document.getElementById('romCount').textContent=ids.length+' ROM(s) on-chain';
+const playableCount=names.filter((n,i)=>finalized[i]&&!n.startsWith('[EMULATOR]')).length;
+document.getElementById('romCount').textContent=playableCount+' ROM(s) on-chain';
 },300);
 }catch(e){
 loadMsg.textContent='Error: '+e.message;
@@ -264,6 +302,7 @@ const q=(filter||'').toLowerCase();
 let shown=0;
 for(let i=0;i<ids.length;i++){
 if(!finalized[i])continue;
+if(names[i].startsWith('[EMULATOR]'))continue;
 if(q&&!names[i].toLowerCase().includes(q))continue;
 shown++;
 const sizeKB=(Number(sizes[i])/1024).toFixed(1);
@@ -340,8 +379,6 @@ downloading.style.display='flex';
 
 try{
 const romData=await fetchROM(romId,name,blockStart);
-downloading.style.display='none';
-document.getElementById('picker').style.display='none';
 
 // Prepare EmulatorJS
 const core=getCore(name);
@@ -350,6 +387,21 @@ const blobUrl=URL.createObjectURL(blob);
 
 // Clean ROM name for save state key
 const gameName=name.replace(/\.[^.]+$/,'');
+
+// Check if this core is available on-chain, and if so fetch it
+const onChainName=ONCHAIN_CORES[core];
+if(onChainName && allROMs && !coreBlobCache[core]){
+// Find the on-chain ROM entry for this core
+const idx=allROMs.names.findIndex(n=>n===onChainName);
+if(idx>=0){
+const coreData=await fetchCoreFromChain(core,{id:Number(allROMs.ids[idx]),blockStart:Number(allROMs.blockStarts[idx])});
+const coreBlob=new Blob([coreData],{type:'application/octet-stream'});
+coreBlobCache[core]=URL.createObjectURL(coreBlob);
+}
+}
+
+downloading.style.display='none';
+document.getElementById('picker').style.display='none';
 
 // Set EmulatorJS globals
 window.EJS_player='#game';
@@ -360,6 +412,13 @@ window.EJS_pathtodata='https://cdn.emulatorjs.org/stable/data/';
 window.EJS_color='#00ff88';
 window.EJS_startOnLoaded=true;
 window.EJS_oldCores=false;
+
+// Override core loading to use on-chain blob URL if available
+if(coreBlobCache[core]){
+const coreFileName=core+'-wasm.data';
+window.EJS_paths=window.EJS_paths||{};
+window.EJS_paths[coreFileName]=coreBlobCache[core];
+}
 
 // Show emulator
 document.getElementById('emulator').style.display='block';
