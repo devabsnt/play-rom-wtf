@@ -285,7 +285,6 @@ document.getElementById('loading').style.display='none';
 document.getElementById('picker').style.display='block';
 renderROMs();
 const playableCount=names.filter((n,i)=>finalized[i]&&!n.startsWith('[EMULATOR]')).length;
-document.getElementById('romCount').textContent=playableCount+' ROM(s) on-chain';
 },300);
 }catch(e){
 loadMsg.textContent='Error: '+e.message;
