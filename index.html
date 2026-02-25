@@ -299,7 +299,6 @@ const q=(filter||'').toLowerCase();
 let shown=0;
 for(let i=0;i<ids.length;i++){
 if(!finalized[i])continue;
-if(names[i].startsWith('[EMULATOR]'))continue;
 if(q&&!names[i].toLowerCase().includes(q))continue;
 shown++;
 const sizeKB=(Number(sizes[i])/1024).toFixed(1);
